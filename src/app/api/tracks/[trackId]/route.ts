@@ -2,11 +2,12 @@ import { NextResponse } from 'next/server';
 import { db } from '@/lib/firebase';
 import { getS3SignedUrl } from '@/lib/s3';
 import { Track } from '@/lib/types';
+import { withAuth } from '@/lib/withAuth';
 
-export async function GET(
+export const GET = withAuth(async (
   request: Request,
   { params }: { params: { trackId: string } }
-) {
+) => {
   try {
     const { trackId } = await params;
     
@@ -32,4 +33,4 @@ export async function GET(
     console.error('Error fetching track:', error);
     return NextResponse.json({ error: 'Failed to fetch track' }, { status: 500 });
   }
-} 
+})

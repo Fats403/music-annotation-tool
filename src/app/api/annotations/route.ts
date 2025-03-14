@@ -5,8 +5,9 @@ import { getS3SignedUrl } from '@/lib/s3';
 import { processAudio } from '@/lib/audio-processing';
 import { AnnotationProgress, Track } from '@/lib/types';
 import { PutObjectCommand } from '@aws-sdk/client-s3';
+import { withAuth } from '@/lib/withAuth';
 
-export async function POST(request: Request) {
+export const POST = withAuth(async (request: Request) => {
   try {
     const {
       trackId, 
@@ -78,4 +79,4 @@ export async function POST(request: Request) {
     console.error('Error saving annotation:', error);
     return NextResponse.json({ error: 'Failed to save annotation' }, { status: 500 });
   }
-} 
+})
