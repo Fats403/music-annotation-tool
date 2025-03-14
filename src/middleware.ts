@@ -9,10 +9,10 @@ const isPublicRoute = createRouteMatcher(["/", "/sign-in(.*)", "/sign-up(.*)"]);
 
 export default clerkMiddleware(async (auth, request) => {
   if (!isPublicRoute(request)) {
+    const { userId, redirectToSignIn } = await auth();
     // First check if user is authenticated
-    const userId = (await auth()).userId;
     if (!userId) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+      return redirectToSignIn();
     }
 
     // Get whitelist from environment variable
