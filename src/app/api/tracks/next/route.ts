@@ -5,17 +5,38 @@ import { getS3SignedUrl } from '@/lib/s3';
 import { AnnotationProgress, Track } from '@/lib/types';
 import { ListObjectsV2Command } from '@aws-sdk/client-s3';
 
-export async function GET() {
+export async function GET(request: Request, { signal }: { signal?: AbortSignal } = {}) {
   try {
-    // Get the current progress document
-    const progressDoc = await db.collection('system').doc('annotation-progress').get();
-    const progress = progressDoc.exists ? progressDoc.data() as AnnotationProgress : {
-      currentFolder: '000',
-      currentFileIndex: 0,
-      completedFolders: [],
-      totalAnnotated: 0,
-      lastAnnotatedAt: new Date().toISOString()
-    };
+    // Get or create the progress document
+    const progressRef = db.collection('system').doc('annotation-progress');
+    const progressDoc = await progressRef.get();
+    
+    let progress: AnnotationProgress;
+    
+    if (!progressDoc.exists) {
+      const initialProgress: AnnotationProgress = {
+        currentFolder: '000',
+        currentFileIndex: 0,
+        completedFolders: [],
+        totalAnnotated: 0,
+        lastAnnotatedAt: new Date().toISOString()
+      };
+      
+      await progressRef.set(initialProgress);
+      progress = initialProgress;
+    } else {
+      progress = progressDoc.data() as AnnotationProgress;
+      
+      // Validate progress data structure
+      if (!progress || typeof progress.currentFolder !== 'string' || 
+          typeof progress.currentFileIndex !== 'number') {
+        console.error('Invalid progress data:', progress);
+        return NextResponse.json(
+          { error: 'Invalid progress data structure' }, 
+          { status: 500 }
+        );
+      }
+    }
     
     // Get list of files in the current folder
     const folderPrefix = `fma_small/${progress.currentFolder}/`;
@@ -26,8 +47,7 @@ export async function GET() {
     }));
     
     if (!Contents || Contents.length === 0) {
-      // Current folder is empty or doesn't exist, try next folder
-      return handleEmptyFolder(progress);
+      return handleEmptyFolder(request, progress);
     }
     
     // Sort files by name to ensure consistent order
@@ -37,7 +57,7 @@ export async function GET() {
     
     // Check if we've processed all files in this folder
     if (progress.currentFileIndex >= sortedFiles.length) {
-      return handleEmptyFolder(progress);
+      return handleEmptyFolder(request, progress);
     }
     
     // Get the next file to process
@@ -50,12 +70,23 @@ export async function GET() {
     
     if (trackDoc.exists && trackDoc.data()?.annotated) {
       // This track is already annotated, move to next one
-      await db.collection('system').doc('annotation-progress').update({
+      await progressRef.update({
         currentFileIndex: progress.currentFileIndex + 1,
       });
       
       // Recursively call this function to get the next unannotated track
-      return GET();
+      // Add a recursion limit to prevent infinite loops
+      const recursionCount = Number(request.headers.get('x-recursion-count') || '0');
+      if (recursionCount > 100) {
+        return NextResponse.json({ 
+          error: 'Maximum recursion depth reached' 
+        }, { status: 500 });
+      }
+      
+      const headers = new Headers();
+      headers.set('x-recursion-count', (recursionCount + 1).toString());
+      
+      return GET(new Request(request.url, { headers }), { signal });
     }
     
     // Create or update track document
@@ -83,11 +114,17 @@ export async function GET() {
     
   } catch (error) {
     console.error('Error getting next track:', error);
-    return NextResponse.json({ error: 'Failed to get next track' }, { status: 500 });
+    return NextResponse.json(
+      { error: 'Failed to get next track' }, 
+      { status: 500 }
+    );
   }
 }
 
-async function handleEmptyFolder(progress: AnnotationProgress): Promise<NextResponse> {
+async function handleEmptyFolder(
+  request: Request,
+  progress: AnnotationProgress
+): Promise<NextResponse> {
   // Current folder is complete, move to next folder
   const currentFolderNum = parseInt(progress.currentFolder, 10);
   const nextFolderNum = currentFolderNum + 1;
@@ -110,6 +147,11 @@ async function handleEmptyFolder(progress: AnnotationProgress): Promise<NextResp
     completedFolders: [...progress.completedFolders, progress.currentFolder]
   });
   
+  // Create a new request using the original request's URL
+  const newRequest = new Request(request.url, {
+    headers: new Headers()
+  });
+  
   // Recursively call GET to fetch from the new folder
-  return GET();
+  return GET(newRequest);
 } 

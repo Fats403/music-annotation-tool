@@ -17,7 +17,7 @@ interface Track {
   annotated: boolean;
   description?: string;
   instruments?: string[];  // Selected instruments
-  moods?: string[];        // Selected moods
+  aspect_list?: string[];  // Changed from moods
   tempo?: string;          // Selected tempo
   genres?: string[];       // Selected genres
   processedUrl?: string;
@@ -35,10 +35,20 @@ const INSTRUMENTS = [
   "vocals", "choir", "organ", "harp", "banjo", "ukulele"
 ];
 
-const MOODS = [
+const ASPECTS = [
+  // Keep some mood descriptors
   "happy", "sad", "energetic", "calm", "relaxed", "tense", "dark", 
   "bright", "melancholic", "nostalgic", "dreamy", "aggressive", 
-  "playful", "romantic", "mysterious", "epic"
+  "playful", "romantic", "mysterious", "epic",
+  
+  // Add musical aspects
+  "crescendo", "diminuendo", "staccato", "legato", "pizzicato",
+  "distorted", "clean", "reverb", "delay", "chorus",
+  "rhythmic", "arpeggiated", "layered", "minimal", "complex",
+  "melodic", "harmonic", "dissonant", "consonant", "atonal",
+  "acoustic", "electronic", "synthetic", "organic", "processed",
+  "looped", "sampled", "live", "studio", "improvised",
+  "vocal-heavy", "instrumental", "beat-driven", "ambient"
 ];
 
 const TEMPOS = [
@@ -52,4 +62,4 @@ const GENRES = [
 ];
 
 export type { AnnotationProgress, Track };
-export { INSTRUMENTS, MOODS, TEMPOS, GENRES }; 
+export { INSTRUMENTS, ASPECTS, TEMPOS, GENRES }; 

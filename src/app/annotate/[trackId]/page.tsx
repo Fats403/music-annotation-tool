@@ -1,18 +1,41 @@
 "use client";
 
-import { useEffect, useState, useRef } from "react";
+import { useEffect, useState, useRef, useCallback } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Card, CardContent, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
-import { Label } from "@/components/ui/label";
-import Waveform from "@/components/Waveform";
-import { INSTRUMENTS, MOODS, GENRES } from "@/lib/types";
-import { Play, Pause, SkipBack, SkipForward, Repeat } from "lucide-react";
+import { WaveformContainer } from "@/components/Waveform";
 import { MultiSelect } from "@/components/ui/multi-select";
 import { detectTempo } from "@/lib/tempoDetection";
 import { Input } from "@/components/ui/input";
+import { useForm } from "react-hook-form";
+import { zodResolver } from "@hookform/resolvers/zod";
+import * as z from "zod";
+import {
+  Form,
+  FormControl,
+  FormField,
+  FormItem,
+  FormLabel,
+  FormMessage,
+} from "@/components/ui/form";
+import { Loader2 } from "lucide-react";
+import { toast } from "sonner"
+import { useTaxonomy } from '@/contexts/TaxonomyContext';
+import { Badge } from "@/components/ui/badge";
+
+// Define form schema with Zod
+const formSchema = z.object({
+  description: z.string().min(1, "Description is required"),
+  instruments: z.array(z.string()),
+  aspect_list: z.array(z.string()),
+  tempo: z.string().optional(),
+  genres: z.array(z.string()),
+});
+
+type AnnotationFormValues = z.infer<typeof formSchema>;
 
 // Replace mock functions with actual implementations
 const fetchTrackDetails = async (trackId: string) => {
@@ -27,7 +50,7 @@ const saveAnnotation = async ({
   endTime,
   description,
   instruments,
-  moods,
+  aspect_list,
   tempo,
   genres
 }: {
@@ -36,7 +59,7 @@ const saveAnnotation = async ({
   endTime: number;
   description: string;
   instruments: string[];
-  moods: string[];
+  aspect_list: string[];
   tempo: string;
   genres: string[];
 }) => {
@@ -49,7 +72,7 @@ const saveAnnotation = async ({
       endTime, 
       description,
       instruments,
-      moods,
+      aspect_list,
       tempo,
       genres
     }),
@@ -59,33 +82,30 @@ const saveAnnotation = async ({
   return response.json();
 };
 
-const fetchNextTrack = async () => {
-  const response = await fetch('/api/tracks/next');
-  if (!response.ok) throw new Error('Failed to fetch next track');
-  return response.json();
-};
 
 export default function AnnotatePage() {
   const { trackId } = useParams() as { trackId: string };
   const router = useRouter();
   const queryClient = useQueryClient();
   
-  const [isPlaying, setIsPlaying] = useState(false);
-  const [currentTime, setCurrentTime] = useState(0);
+  // Waveform-related state
   const [selectionStart, setSelectionStart] = useState(0);
-  const [selectionEnd, setSelectionEnd] = useState(10); // Default 10-second segment
-  const [description, setDescription] = useState("");
-  const [isWaveformReady, setIsWaveformReady] = useState(false);
-  const [duration, setDuration] = useState(0);
-  const [annotationStatus, setAnnotationStatus] = useState<'idle' | 'success' | 'error'>('idle');
-  
-  // Add state for structured data
-  const [selectedInstruments, setSelectedInstruments] = useState<string[]>([]);
-  const [selectedMoods, setSelectedMoods] = useState<string[]>([]);
-  const [tempo, setTempo] = useState<string>("");
-  const [selectedGenres, setSelectedGenres] = useState<string[]>([]);
+  const [selectionEnd, setSelectionEnd] = useState(10);
   const [isDetectingBPM, setIsDetectingBPM] = useState(false);
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  
+  // Initialize form with react-hook-form
+  const form = useForm<AnnotationFormValues>({
+    resolver: zodResolver(formSchema),
+    defaultValues: {
+      description: "",
+      instruments: [],
+      aspect_list: [],
+      tempo: "",
+      genres: []
+    },
+    mode: "onSubmit"
+  });
   
   // Fetch track details
   const { data: track, isLoading: isLoadingTrack } = useQuery({
@@ -93,157 +113,49 @@ export default function AnnotatePage() {
     queryFn: () => fetchTrackDetails(trackId),
   });
   
-  // If no trackId is provided, fetch the next track
-  useEffect(() => {
-    if (!trackId || trackId === 'next') {
-      fetchNextTrack().then(nextTrack => {
-        if (nextTrack.complete) {
-          router.push('/annotate/complete');
-        } else {
-          router.replace(`/annotate/${nextTrack.id}`);
-        }
-      }).catch(error => {
-        console.error('Error fetching next track:', error);
-      });
-    }
-  }, [trackId, router]);
+  // Add this to get dynamic options
+  const { instruments, aspects, genres, refreshTaxonomy, isLoading: isTaxonomyLoading } = useTaxonomy();
   
-  // Modify save annotation mutation
+  // Handle selection change from waveform container
+  const handleSelectionChange = useCallback((start: number, end: number) => {
+    setSelectionStart(start);
+    setSelectionEnd(end);
+  }, []);
+  
+  // Save annotation mutation
   const { mutate: submitAnnotation, isPending: isSaving } = useMutation({
     mutationFn: saveAnnotation,
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["track", trackId] });
-      setDescription("");
-      setSelectedInstruments([]);
-      setSelectedMoods([]);
-      setTempo("");
-      setSelectedGenres([]);
-      setAnnotationStatus('success');
       
-      // Fetch next track directly instead of redirecting
-      setTimeout(() => {
-        fetchNextTrack().then(nextTrack => {
-          if (nextTrack.complete) {
-            router.push('/annotate/complete');
-          } else {
-            router.replace(`/annotate/${nextTrack.id}`);
-          }
-        }).catch(error => {
-          console.error('Error fetching next track:', error);
-        });
-      }, 1500);
+      // Show success toast
+      toast.success("Your annotation was saved successfully.");
+      
+      // Redirect to the annotate page which will handle finding the next track
+      router.push('/annotate');
     },
     onError: () => {
-      setAnnotationStatus('error');
+      toast.error("Failed to save annotation. Please try again.");
     }
   });
   
-  // Handle waveform events
-  const handleWaveformReady = (isReady: boolean, audioDuration: number) => {
-    setIsWaveformReady(isReady);
-    setDuration(audioDuration);
-    
-    // If the audio is longer than 30 seconds, set a default 10-second segment in the middle
-    if (audioDuration > 30) {
-      const middle = audioDuration / 2;
-      setSelectionStart(middle - 5);
-      setSelectionEnd(middle + 5);
-    }
-  };
-  
-  const handleTimeUpdate = (time: number) => {
-    setCurrentTime(time);
-  };
-  
-  const handlePlayPause = (playing: boolean) => {
-    setIsPlaying(playing);
-  };
-  
-  const handleRegionUpdate = (start: number, end: number) => {
-    setSelectionStart(start);
-    setSelectionEnd(end);
-  };
-  
-  // Playback control functions using custom events
-  const togglePlayPause = () => {
-    window.dispatchEvent(new Event('waveform-toggle-play'));
-  };
-  
-  const skipBackward = () => {
-    window.dispatchEvent(new Event('waveform-skip-backward'));
-  };
-  
-  const skipForward = () => {
-    window.dispatchEvent(new Event('waveform-skip-forward'));
-  };
-  
-  const playSelection = () => {
-    window.dispatchEvent(new Event('waveform-play-selection'));
-  };
-  
-  // Update region via custom event
-  useEffect(() => {
-    const updateRegion = () => {
-      const event = new CustomEvent('waveform-update-region', {
-        detail: { start: selectionStart, end: selectionEnd }
-      });
-      window.dispatchEvent(event);
-    };
-    
-    if (isWaveformReady) {
-      updateRegion();
-    }
-  }, [selectionStart, selectionEnd, isWaveformReady]);
-  
-  const handleSaveAnnotation = () => {
-    if (!description.trim()) {
-      alert("Please provide a description");
-      return;
-    }
-    
+  // Form submission handler
+  const onSubmit = (values: AnnotationFormValues) => {
     submitAnnotation({
       trackId,
       startTime: selectionStart,
       endTime: selectionEnd,
-      description,
-      instruments: selectedInstruments,
-      moods: selectedMoods,
-      tempo: tempo,
-      genres: selectedGenres
+      description: values.description,
+      instruments: values.instruments,
+      aspect_list: values.aspect_list,
+      tempo: values.tempo || "",
+      genres: values.genres
     });
-  };
-  
-  // Render status message
-  const renderStatusMessage = () => {
-    if (annotationStatus === 'success') {
-      return (
-        <div className="mt-4 p-3 bg-green-100 text-green-800 rounded-md">
-          Annotation saved successfully! Processing audio and loading next track...
-        </div>
-      );
-    } else if (annotationStatus === 'error') {
-      return (
-        <div className="mt-4 p-3 bg-red-100 text-red-800 rounded-md">
-          Error saving annotation. Please try again.
-        </div>
-      );
-    }
-    return null;
-  };
-  
-  // Display current time and duration information
-  const renderTimeInfo = () => {
-    return (
-      <div className="text-sm text-muted-foreground mt-1 flex justify-between">
-        <span>Current: {currentTime.toFixed(2)}s</span>
-        <span>Duration: {duration.toFixed(2)}s</span>
-      </div>
-    );
   };
   
   // Auto-detect BPM when audio is loaded
   useEffect(() => {
-    if (track?.originalUrl && !tempo && !isDetectingBPM) {
+    if (track?.originalUrl && !form.getValues("tempo") && !isDetectingBPM) {
       const detectTheTempo = async () => {
         try {
           setIsDetectingBPM(true);
@@ -266,7 +178,7 @@ export default function AnnotatePage() {
           // Set the detected BPM as the tempo value, rounded to nearest 10
           if (bpm) {
             const roundedBPM = Math.round(bpm / 10) * 10;
-            setTempo(roundedBPM.toString());
+            form.setValue("tempo", roundedBPM.toString());
           }
         } catch (error) {
           console.error("Error detecting BPM:", error);
@@ -277,13 +189,53 @@ export default function AnnotatePage() {
       
       detectTheTempo();
     }
-  }, [track?.originalUrl, tempo, isDetectingBPM]);
+  }, [track?.originalUrl, form, isDetectingBPM]);
   
   // Handle tempo input change
   const handleTempoChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     // Only allow numeric input
     const value = e.target.value.replace(/[^0-9]/g, '');
-    setTempo(value);
+    form.setValue("tempo", value);
+  };
+  
+  // Handle manual BPM detection
+  const handleDetectBPM = () => {
+    if (audioRef.current && track?.originalUrl) {
+      setIsDetectingBPM(true);
+      detectTempo(track.originalUrl)
+        .then(bpm => {
+          if (bpm) {
+            const roundedBPM = Math.round(bpm / 10) * 10;
+            form.setValue("tempo", roundedBPM.toString());
+          }
+        })
+        .catch(console.error)
+        .finally(() => setIsDetectingBPM(false));
+    }
+  };
+  
+  // Add this after the form initialization (around line 108)
+  useEffect(() => {
+    if (track?.annotated) {
+      // Reset form with existing annotation data
+      form.reset({
+        description: track.description || "",
+        instruments: track.instruments || [],
+        aspect_list: track.aspect_list || [],
+        tempo: track.tempo || "",
+        genres: track.genres || []
+      });
+
+      // Update selection state if segment exists
+      if (track.segment) {
+        setSelectionStart(track.segment.start);
+        setSelectionEnd(track.segment.end);
+      }
+    }
+  }, [track, form]);
+  
+  const handleGoToLatest = () => {
+    router.push('/annotate');
   };
   
   if (isLoadingTrack) {
@@ -297,179 +249,190 @@ export default function AnnotatePage() {
   return (
     <div className="container mx-auto py-8 max-w-3xl bg-background text-foreground">
       <Card className="shadow-lg border-border">
-        <CardHeader>
+        <CardHeader className="relative">
           <CardTitle>Annotate Track: {track?.id}</CardTitle>
+          {track?.annotated && (
+            <Badge 
+              variant="secondary" 
+              className="absolute top-0 right-6"
+            >
+              Already Annotated
+            </Badge>
+          )}
         </CardHeader>
         
-        <CardContent className="space-y-6">
-          {track?.originalUrl && (
-            <div className="space-y-2">
-              <Label>Audio Waveform</Label>
-              <div className="bg-muted rounded-md overflow-hidden">
-                <Waveform
+        <Form {...form}>
+          <form onSubmit={form.handleSubmit(onSubmit)}>
+            <CardContent className="space-y-6">
+              {track?.originalUrl && (
+                <WaveformContainer
                   audioUrl={track.originalUrl}
-                  selectionStart={selectionStart}
-                  selectionEnd={selectionEnd}
-                  isPlaying={isPlaying}
-                  onReady={handleWaveformReady}
-                  onTimeUpdate={handleTimeUpdate}
-                  onPlayPause={handlePlayPause}
-                  onRegionUpdate={handleRegionUpdate}
+                  onSelectionChange={handleSelectionChange}
+                  initialSelection={{
+                    start: track.segment?.start ?? selectionStart,
+                    end: track.segment?.end ?? selectionEnd
+                  }}
                 />
-              </div>
-              <div className="flex justify-between text-sm text-muted-foreground">
-                <span>Selection: {selectionStart.toFixed(2)}s - {selectionEnd.toFixed(2)}s</span>
-                <span>Duration: {(selectionEnd - selectionStart).toFixed(2)}s</span>
-              </div>
-              {renderTimeInfo()}
+              )}
               
-              {/* Playback controls */}
-              <div className="flex justify-center space-x-2 mt-2">
-                <Button 
-                  variant="outline" 
-                  size="icon" 
-                  onClick={skipBackward}
-                  title="Skip back 5 seconds"
-                >
-                  <SkipBack className="h-4 w-4" />
-                </Button>
-                <Button 
-                  variant="outline" 
-                  size="icon" 
-                  onClick={togglePlayPause}
-                  title={isPlaying ? "Pause" : "Play"}
-                >
-                  {isPlaying ? <Pause className="h-4 w-4" /> : <Play className="h-4 w-4" />}
-                </Button>
-                <Button 
-                  variant="outline" 
-                  size="icon" 
-                  onClick={skipForward}
-                  title="Skip forward 5 seconds"
-                >
-                  <SkipForward className="h-4 w-4" />
-                </Button>
-                <Button 
-                  variant="outline" 
-                  onClick={playSelection}
-                  title="Play selected region"
-                  className="ml-2"
-                >
-                  <Repeat className="h-4 w-4 mr-2" />
-                  Play Selection
-                </Button>
-              </div>
-            </div>
-          )}
-          
-          <div className="space-y-2">
-            <Label htmlFor="description">Description</Label>
-            <Textarea
-              id="description"
-              placeholder="Describe the audio segment in detail..."
-              value={description}
-              onChange={(e) => setDescription(e.target.value)}
-              className="min-h-24"
-            />
-          </div>
-          
-          {/* Instruments Selection */}
-          <div className="space-y-2">
-            <Label>Instruments</Label>
-            <MultiSelect
-              options={INSTRUMENTS}
-              selected={selectedInstruments}
-              onChange={setSelectedInstruments}
-              placeholder="Select instruments..."
-              emptyMessage="No instruments found."
-              allowCustomValues={true}
-            />
-          </div>
-          
-          {/* Moods Selection */}
-          <div className="space-y-2">
-            <Label>Moods</Label>
-            <MultiSelect
-              options={MOODS}
-              selected={selectedMoods}
-              onChange={setSelectedMoods}
-              placeholder="Select moods..."
-              emptyMessage="No moods found."
-              allowCustomValues={true}
-            />
-          </div>
-          
-          {/* Tempo Input */}
-          <div className="space-y-2">
-            <Label htmlFor="tempo">
-              Tempo (BPM) {isDetectingBPM ? " (Detecting...)" : ""}
-            </Label>
-            <div className="flex items-center space-x-2">
-              <Input
-                id="tempo"
-                type="text"
-                value={tempo}
-                onChange={handleTempoChange}
-                placeholder="Enter BPM"
-                className="w-32"
+              <FormField
+                control={form.control}
+                name="description"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Description</FormLabel>
+                    <FormControl>
+                      <Textarea
+                        placeholder="Describe the audio segment in detail..."
+                        className="min-h-24"
+                        {...field}
+                      />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
               />
-              {isDetectingBPM && (
-                <div className="animate-spin h-4 w-4 border-2 border-primary rounded-full border-t-transparent"></div>
+              
+              <FormField
+                control={form.control}
+                name="instruments"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel className="flex items-center">
+                      Instruments
+                      {isTaxonomyLoading && (
+                        <div className="ml-2 h-3 w-3 animate-spin rounded-full border-2 border-primary border-t-transparent"></div>
+                      )}
+                    </FormLabel>
+                    <FormControl>
+                      <MultiSelect
+                        options={instruments}
+                        selected={field.value}
+                        onChange={field.onChange}
+                        placeholder={isTaxonomyLoading ? "Loading instruments..." : "Select instruments..."}
+                        emptyMessage="No instruments found."
+                        allowCustomValues={true}
+                        category="instruments"
+                        onOptionsChange={() => refreshTaxonomy()}
+                      />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              
+              <FormField
+                control={form.control}
+                name="aspect_list"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Aspects</FormLabel>
+                    <FormControl>
+                      <MultiSelect
+                        options={aspects}
+                        selected={field.value}
+                        onChange={field.onChange}
+                        placeholder="Select aspects..."
+                        emptyMessage="No aspects found."
+                        allowCustomValues={true}
+                        category="aspects"
+                        onOptionsChange={() => refreshTaxonomy()}
+                      />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              
+              <FormField
+                control={form.control}
+                name="genres"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Genres</FormLabel>
+                    <FormControl>
+                      <MultiSelect
+                        options={genres}
+                        selected={field.value}
+                        onChange={field.onChange}
+                        placeholder="Select genres..."
+                        emptyMessage="No genres found."
+                        allowCustomValues={true}
+                        category="genres"
+                        onOptionsChange={() => refreshTaxonomy()}
+                      />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <FormField
+                control={form.control}
+                name="tempo"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>
+                      Tempo (BPM) {isDetectingBPM ? " (Detecting...)" : ""}
+                    </FormLabel>
+                    <div className="flex items-center space-x-2">
+                      <FormControl>
+                        <Input
+                          type="text"
+                          value={field.value}
+                          onChange={handleTempoChange}
+                          placeholder="Enter BPM"
+                          className="w-32"
+                        />
+                      </FormControl>
+                      {isDetectingBPM && (
+                        <div className="animate-spin h-4 w-4 border-2 border-primary rounded-full border-t-transparent"></div>
+                      )}
+                      <Button 
+                        type="button"
+                        variant="outline" 
+                        size="sm"
+                        onClick={handleDetectBPM}
+                        disabled={isDetectingBPM || !track?.originalUrl}
+                      >
+                        Detect
+                      </Button>
+                    </div>
+                    <p className="text-xs text-muted-foreground">
+                      Auto-detected BPM can be manually adjusted if needed
+                    </p>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+            </CardContent>
+            
+            <CardFooter className="flex justify-end gap-4">
+              {/* Only show the Go to Latest button if the current track has already been annotated */}
+              {track?.annotated && (
+                <Button 
+                  type="button" 
+                  variant="outline"
+                  onClick={handleGoToLatest}
+                >
+                  Go to Latest Track
+                </Button>
               )}
               <Button 
-                variant="outline" 
-                size="sm"
-                onClick={() => {
-                  if (audioRef.current && track?.originalUrl) {
-                    setIsDetectingBPM(true);
-                    detectTempo(track.originalUrl)
-                      .then(bpm => {
-                        if (bpm) {
-                          const roundedBPM = Math.round(bpm / 10) * 10;
-                          setTempo(roundedBPM.toString());
-                        }
-                      })
-                      .catch(console.error)
-                      .finally(() => setIsDetectingBPM(false));
-                  }
-                }}
-                disabled={isDetectingBPM || !track?.originalUrl}
+                type="submit" 
+                disabled={isSaving}
               >
-                Detect
+                {isSaving ? (
+                  <>
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    {track?.annotated ? 'Updating...' : 'Saving...'}
+                  </>
+                ) : (
+                  track?.annotated ? 'Update Annotation' : 'Save Annotation'
+                )}
               </Button>
-            </div>
-            <p className="text-xs text-muted-foreground">
-              Auto-detected BPM can be manually adjusted if needed
-            </p>
-          </div>
-          
-          {/* Genres Selection */}
-          <div className="space-y-2">
-            <Label>Genres</Label>
-            <MultiSelect
-              options={GENRES}
-              selected={selectedGenres}
-              onChange={setSelectedGenres}
-              placeholder="Select genres..."
-              emptyMessage="No genres found."
-              allowCustomValues={true}
-            />
-          </div>
-          
-          {renderStatusMessage()}
-        </CardContent>
-        
-        <CardFooter className="flex justify-between">
-          <Button variant="outline" onClick={() => router.push('/')}>
-            Cancel
-          </Button>
-          <Button 
-            onClick={handleSaveAnnotation} 
-            disabled={!isWaveformReady || isSaving || !description.trim()}
-          >
-            {isSaving ? 'Saving...' : 'Save Annotation'}
-          </Button>
-        </CardFooter>
+            </CardFooter>
+          </form>
+        </Form>
       </Card>
     </div>
   );

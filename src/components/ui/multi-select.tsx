@@ -1,4 +1,3 @@
-
 "use client";
 
 import * as React from "react";
@@ -18,6 +17,8 @@ interface MultiSelectProps {
   emptyMessage?: string;
   className?: string;
   allowCustomValues?: boolean;
+  category?: 'instruments' | 'aspects' | 'genres';
+  onOptionsChange?: (newOptions: string[]) => void;
 }
 
 export function MultiSelect({
@@ -28,18 +29,50 @@ export function MultiSelect({
   emptyMessage = "No items found.",
   className,
   allowCustomValues = false,
+  category,
+  onOptionsChange,
 }: MultiSelectProps) {
   const [open, setOpen] = React.useState(false);
   const [inputValue, setInputValue] = React.useState("");
   const [availableOptions, setAvailableOptions] = React.useState<string[]>(options);
 
   // Add custom value to options if it doesn't exist
-  const handleAddCustomValue = () => {
+  const handleAddCustomValue = async () => {
     if (!inputValue.trim() || availableOptions.includes(inputValue)) return;
     
-    setAvailableOptions(prev => [...prev, inputValue]);
-    onChange([...selected, inputValue]);
+    const newValue = inputValue.trim();
+    const newOptions = [...availableOptions, newValue];
+    
+    // Update local state
+    setAvailableOptions(newOptions);
+    onChange([...selected, newValue]);
     setInputValue("");
+    
+    // Update Firestore if category is provided
+    if (category) {
+      try {
+        // Call the API route instead of directly using Firebase
+        const response = await fetch('/api/taxonomy/update', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ 
+            category, 
+            values: [newValue] 
+          }),
+        });
+        
+        if (!response.ok) {
+          throw new Error('Failed to update taxonomy');
+        }
+        
+        // Notify parent component about the change
+        if (onOptionsChange) {
+          onOptionsChange(newOptions);
+        }
+      } catch (error) {
+        console.error(`Error updating ${category} taxonomy:`, error);
+      }
+    }
   };
 
   // Toggle selection of an item
@@ -58,17 +91,17 @@ export function MultiSelect({
           variant="outline"
           role="combobox"
           aria-expanded={open}
-          className={cn("w-full justify-between", className)}
+          className={cn("w-full justify-between h-auto min-h-10 px-3 py-2", className)}
         >
           {selected.length > 0 ? (
-            <div className="flex gap-1 flex-wrap">
+            <div className="flex gap-1.5 flex-wrap">
               {selected.length > 2 ? (
-                <Badge variant="secondary" className="rounded-sm">
+                <Badge variant="secondary" className="rounded-md px-2 py-1 text-xs font-medium">
                   {selected.length} selected
                 </Badge>
               ) : (
                 selected.map(item => (
-                  <Badge key={item} variant="secondary" className="rounded-sm">
+                  <Badge key={item} variant="secondary" className="rounded-md px-2 py-1 text-xs font-medium">
                     {item}
                   </Badge>
                 ))
@@ -80,29 +113,30 @@ export function MultiSelect({
           <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
         </Button>
       </PopoverTrigger>
-      <PopoverContent className="w-full p-0" align="start">
-        <Command>
+      <PopoverContent className="w-full p-0 shadow-md border-border" align="start">
+        <Command className="rounded-lg">
           <CommandInput 
             placeholder="Search..." 
             value={inputValue}
             onValueChange={setInputValue}
+            className="border-none focus:ring-0"
           />
-          <CommandList>
-            <CommandEmpty>
+          <CommandList className="max-h-[200px] overflow-auto">
+            <CommandEmpty className="py-3 px-4 text-sm text-muted-foreground">
               {emptyMessage}
               {allowCustomValues && inputValue && (
                 <Button
                   variant="outline"
                   size="sm"
-                  className="mt-2 w-full"
+                  className="mt-2 w-full text-xs font-medium"
                   onClick={handleAddCustomValue}
                 >
-                  <Plus className="mr-2 h-4 w-4" />
+                  <Plus className="mr-2 h-3.5 w-3.5" />
                   Add &quot;{inputValue}&quot;
                 </Button>
               )}
             </CommandEmpty>
-            <CommandGroup>
+            <CommandGroup className="py-1">
               {availableOptions
                 .filter(option => 
                   option.toLowerCase().includes(inputValue.toLowerCase())
@@ -120,24 +154,25 @@ export function MultiSelect({
                     key={option}
                     value={option}
                     onSelect={() => handleSelect(option)}
+                    className="px-4 py-2 cursor-pointer aria-selected:bg-accent/50"
                   >
-                    <div className="flex items-center gap-2 w-full">
+                    <div className="flex items-center gap-2.5 w-full">
                       <div className={cn(
-                        "flex-shrink-0 border rounded-sm w-4 h-4 flex items-center justify-center",
+                        "flex-shrink-0 border rounded-sm w-4 h-4 flex items-center justify-center transition-colors",
                         selected.includes(option) ? "bg-primary border-primary" : "border-input"
                       )}>
                         {selected.includes(option) && (
                           <Check className="h-3 w-3 text-primary-foreground" />
                         )}
                       </div>
-                      <span>{option}</span>
+                      <span className="text-sm">{option}</span>
                     </div>
                   </CommandItem>
                 ))}
             </CommandGroup>
           </CommandList>
           {allowCustomValues && (
-            <div className="p-2 border-t">
+            <div className="p-3 border-t border-border">
               <div className="flex items-center gap-2">
                 <Input
                   placeholder="Add custom value..."
@@ -149,12 +184,14 @@ export function MultiSelect({
                       handleAddCustomValue();
                     }
                   }}
+                  className="h-9 text-sm"
                 />
                 <Button 
                   variant="secondary" 
                   size="sm"
                   onClick={handleAddCustomValue}
                   disabled={!inputValue.trim() || availableOptions.includes(inputValue)}
+                  className="h-9 px-2.5"
                 >
                   <Plus className="h-4 w-4" />
                 </Button>
@@ -177,12 +214,12 @@ export function SelectedBadges({
   if (selected.length === 0) return null;
   
   return (
-    <div className="flex flex-wrap gap-1 mt-2">
+    <div className="flex flex-wrap gap-1.5 mt-2">
       {selected.map(item => (
-        <Badge key={item} variant="secondary" className="rounded-sm">
+        <Badge key={item} variant="secondary" className="rounded-md px-2 py-1 text-xs font-medium">
           {item}
           <button
-            className="ml-1 rounded-full outline-none focus:ring-2 focus:ring-offset-1"
+            className="ml-1.5 rounded-full outline-none focus:ring-2 focus:ring-ring focus:ring-offset-1 hover:bg-muted/60 p-0.5"
             onClick={() => onRemove(item)}
           >
             <X className="h-3 w-3" />

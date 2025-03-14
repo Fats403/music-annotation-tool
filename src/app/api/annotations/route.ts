@@ -8,16 +8,21 @@ import { PutObjectCommand } from '@aws-sdk/client-s3';
 
 export async function POST(request: Request) {
   try {
-    const { 
+    const {
       trackId, 
-      startTime, 
-      endTime, 
+      startTime,  
       description,
       instruments,
-      moods,
+      aspect_list,
       tempo,
       genres
     } = await request.json();
+    
+    // Round start and end times to 1 decimal place
+    const roundedStartTime = Math.round(startTime * 10) / 10;
+    
+    // Ensure segment is exactly 10 seconds
+    const adjustedEndTime = roundedStartTime + 10.0;
     
     // 1. Get track info from Firestore
     const trackDoc = await db.collection('tracks').doc(trackId).get();
@@ -29,10 +34,10 @@ export async function POST(request: Request) {
     
     // 2. Process audio (trim, convert to mono, set sample rate)
     const originalUrl = await getS3SignedUrl(track.s3Key);
-    const processedAudio = await processAudio(originalUrl, startTime, endTime);
+    const processedAudio = await processAudio(originalUrl, roundedStartTime, adjustedEndTime);
     
     // 3. Upload processed audio to S3
-    const processedKey = `processed/${trackId}_${startTime}_${endTime}.wav`;
+    const processedKey = `processed/${trackId}_${roundedStartTime}_${adjustedEndTime}.wav`;
     await s3Client.send(new PutObjectCommand({
       Bucket: process.env.S3_BUCKET_NAME!,
       Key: processedKey,
@@ -40,23 +45,20 @@ export async function POST(request: Request) {
       ContentType: 'audio/wav',
     }));
     
-    // 4. Generate a signed URL for the processed file
-    const processedUrl = await getS3SignedUrl(processedKey);
-    
-    // 5. Update Firestore with annotation
+    // 4. Update Firestore with annotation
     await db.collection('tracks').doc(trackId).update({
       annotated: true,
       description: description,
       instruments: instruments || [],
-      moods: moods || [],
+      aspect_list: aspect_list || [],
       tempo: tempo || "",
       genres: genres || [],
-      processedUrl: processedUrl,
+      processedS3Key: processedKey,
       annotatedAt: new Date().toISOString(),
-      segment: { start: startTime, end: endTime }
+      segment: { start: roundedStartTime, end: adjustedEndTime }
     });
     
-    // 6. Update progress counter
+    // 5. Update progress counter
     const progressRef = db.collection('system').doc('annotation-progress');
     await db.runTransaction(async (transaction) => {
       const progressDoc = await transaction.get(progressRef);
@@ -71,7 +73,6 @@ export async function POST(request: Request) {
     
     return NextResponse.json({ 
       success: true, 
-      processedUrl: processedUrl
     });
   } catch (error) {
     console.error('Error saving annotation:', error);
