@@ -3,10 +3,10 @@ import { db } from "@/lib/firebase";
 import { getS3SignedUrl } from "@/lib/s3";
 import { Track } from "@/lib/types";
 
-export const GET = async (
+export async function GET(
   request: Request,
-  { params }: { params: { trackId: string } }
-) => {
+  { params }: { params: Promise<{ trackId: string }> }
+) {
   try {
     const { trackId } = await params;
 
@@ -34,4 +34,4 @@ export const GET = async (
       { status: 500 }
     );
   }
-};
+}

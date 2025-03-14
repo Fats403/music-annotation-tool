@@ -5,7 +5,7 @@ import { getS3SignedUrl } from "@/lib/s3";
 import { AnnotationProgress, Track } from "@/lib/types";
 import { ListObjectsV2Command } from "@aws-sdk/client-s3";
 
-export const GET = async (request: Request): Promise<Response> => {
+export async function GET(request: Request): Promise<Response> {
   try {
     // Get or create the progress document
     const progressRef = db.collection("system").doc("annotation-progress");
@@ -130,7 +130,7 @@ export const GET = async (request: Request): Promise<Response> => {
       { status: 500 }
     );
   }
-};
+}
 
 async function handleEmptyFolder(
   request: Request,
