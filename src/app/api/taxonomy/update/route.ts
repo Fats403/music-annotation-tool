@@ -1,8 +1,7 @@
 import { NextResponse } from "next/server";
 import { updateTaxonomyOptions } from "@/lib/firebase";
-import { withAuth } from "@/lib/withAuth";
 
-export const POST = withAuth(async (request: Request) => {
+export const POST = async (request: Request) => {
   try {
     const { category, values } = await request.json();
 
@@ -30,4 +29,4 @@ export const POST = withAuth(async (request: Request) => {
       { status: 500 }
     );
   }
-});
+};

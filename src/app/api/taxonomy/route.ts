@@ -1,8 +1,7 @@
 import { NextResponse } from "next/server";
 import { fetchTaxonomyOptions } from "@/lib/firebase";
-import { withAuth } from "@/lib/withAuth";
 
-export const GET = withAuth(async () => {
+export const GET = async () => {
   try {
     const taxonomy = await fetchTaxonomyOptions();
     return NextResponse.json(taxonomy);
@@ -13,4 +12,4 @@ export const GET = withAuth(async () => {
       { status: 500 }
     );
   }
-});
+};
